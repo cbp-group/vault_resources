@@ -6,6 +6,5 @@ This file is used to list changes made in each version of the vault_resources co
 
 Initial release.
 
-- change 0
-- change 1
+- creation of the vault_certificate resource
 

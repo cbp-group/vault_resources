@@ -1,20 +1,16 @@
 name 'vault_resources'
-maintainer 'The Authors'
-maintainer_email 'you@example.com'
-license 'All Rights Reserved'
-description 'Installs/Configures vault_resources'
-long_description 'Installs/Configures vault_resources'
+source_url "https://github.com/Tensibai/#{name}"
+issues_url "https://github.com/Tensibai/#{name}/issues"
+maintainer 'Sous Chefs'
+maintainer_email 'help@sous-chefs.org'
+license 'MIT'
+description 'Library of vault resources to handle secrets'
+long_description 'Library of vault resources to handle secrets'
 version '0.1.0'
 chef_version '>= 12.14' if respond_to?(:chef_version)
 
-# The `issues_url` points to the location where issues for this cookbook are
-# tracked.  A `View Issues` link will be displayed on this cookbook's page when
-# uploaded to a Supermarket.
-#
-# issues_url 'https://github.com/<insert_org_here>/vault_resources/issues'
+%w( aix amazon centos fedora freebsd debian oracle mac_os_x redhat suse opensuse opensuseleap ubuntu windows zlinux ).each do |os|
+  supports os
+end
 
-# The `source_url` points to the development repository for this cookbook.  A
-# `View Source` link will be displayed on this cookbook's page when uploaded to
-# a Supermarket.
-#
-# source_url 'https://github.com/<insert_org_here>/vault_resources'
+gem 'vault', '~>0.12'
