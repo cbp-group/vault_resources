@@ -4,25 +4,25 @@ resource_name :vault_pki_intermediate
 
 property :ttl, String, default: '2160h'
 property :max_ttl, String, default: '8760h'
-property :allow_localhost, Bool, default: true
+property :allow_localhost, [TrueClass, FalseClass], default: true
 property :allowed_domains, Array, default: []
-property :allow_bare_domains, Bool, default: false
-property :allow_subdomains, Bool, default: false
-property :allow_glob_domains, Bool, default: false
-property :allow_any_name,Bool, default: false
-property :enforce_hostnames, Bool, default: true
-property :allow_ip_sans, Bool, default: false
+property :allow_bare_domains, [TrueClass, FalseClass], default: false
+property :allow_subdomains, [TrueClass, FalseClass], default: false
+property :allow_glob_domains, [TrueClass, FalseClass], default: false
+property :allow_any_name,[TrueClass, FalseClass], default: false
+property :enforce_hostnames, [TrueClass, FalseClass], default: true
+property :allow_ip_sans, [TrueClass, FalseClass], default: false
 property :allowed_uri_sans, String, default: ""
-property :server_flag, Bool, default: true
-property :client_flag, Bool,default: true
-property :code_signing_flag, Bool, default: false
-property :email_protection_flag, Bool, default: false
+property :server_flag, [TrueClass, FalseClass], default: true
+property :client_flag, [TrueClass, FalseClass],default: true
+property :code_signing_flag, [TrueClass, FalseClass], default: false
+property :email_protection_flag, [TrueClass, FalseClass], default: false
 property :key_type, %w(rsa ec), default: 'rsa'
 property :key_bits, Integer, default: 2048
 property :key_usage, Array, default: %w(DigitalSignature KeyAgreement KeyEncipherment)
 property :ext_key_usage, Array, default: []
-property :use_csr_common_name, Bool, default: true
-property :use_csr_sans, Bool, default: true
+property :use_csr_common_name, [TrueClass, FalseClass], default: true
+property :use_csr_sans, [TrueClass, FalseClass], default: true
 property :ou, Array, default: []
 property :organization, Array, default: []
 property :country, Array, default: []
@@ -30,11 +30,11 @@ property :locality, Array, default: []
 property :province, Array, default: []
 property :street_address, Array, default: []
 property :postal_code, Array, default: []
-property :generate_lease, Bool, default: false
-property :no_store, Bool, default: false
-property :require_cn, Bool, default: true
+property :generate_lease, [TrueClass, FalseClass], default: false
+property :no_store, [TrueClass, FalseClass], default: false
+property :require_cn, [TrueClass, FalseClass], default: true
 property :policy_identifiers, Array,  default: []
-property :basic_constraints_valid_for_non_ca, Bool, default: false
+property :basic_constraints_valid_for_non_ca, [TrueClass, FalseClass], default: false
 property :not_before_duration, String, default: '30s'
 
 property :vault_backend, String, default: 'pki', desired_state: false
