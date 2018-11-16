@@ -1,13 +1,14 @@
 ---
 driver:
-  name: vagrant
+  name: docker
+  socket: npipe:////./pipe/docker_engine
 
 provisioner:
   name: chef_zero
   # You may wish to disable always updating cookbooks in CI or other testing environments.
   # For example:
   #   always_update_cookbooks: <%= !ENV['CI'] %>
-  always_update_cookbooks: true
+  always_update_cookbooks: false
 
 verifier:
   name: inspec
