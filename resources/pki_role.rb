@@ -1,6 +1,7 @@
+# rubocop:disable Layout/LeadingCommentSpace, Style/BlockComments
 require 'vault'
 
-resource_name :vault_pki_intermediate
+resource_name :vault_pki_role
 
 property :ttl, String, default: '2160h'
 property :max_ttl, String, default: '8760h'
@@ -12,7 +13,8 @@ property :allow_glob_domains, [TrueClass, FalseClass], default: false
 property :allow_any_name,[TrueClass, FalseClass], default: false
 property :enforce_hostnames, [TrueClass, FalseClass], default: true
 property :allow_ip_sans, [TrueClass, FalseClass], default: false
-property :allowed_uri_sans, String, default: ""
+property :allowed_uri_sans, Array, default: []
+property :allowed_other_sans, Array, default: []
 property :server_flag, [TrueClass, FalseClass], default: true
 property :client_flag, [TrueClass, FalseClass],default: true
 property :code_signing_flag, [TrueClass, FalseClass], default: false
@@ -35,9 +37,9 @@ property :no_store, [TrueClass, FalseClass], default: false
 property :require_cn, [TrueClass, FalseClass], default: true
 property :policy_identifiers, Array,  default: []
 property :basic_constraints_valid_for_non_ca, [TrueClass, FalseClass], default: false
-property :not_before_duration, String, default: '30s'
+property :not_before_duration, Integer, default: 30
 
-property :vault_backend, String, default: 'pki', desired_state: false
+property :vault_pki, String, default: 'pki', desired_state: false
 property :vault_auth_method, String, default: 'token', desired_state: false, callbacks: {
     "should be one of Vault::Authenticate methods: #{Vault::Authenticate.instance_methods(false)}" => lambda do |m|
       Vault.auth.respond_to?(m)
@@ -53,89 +55,83 @@ property :vault_client_options, Hash, desired_state: false, default: {}, callbac
       v.empty? || URI.parse(v['address'])
     end,
 }
-#<> @property vault_role where to mount this pki backend in vault.
+#<> @property vault_role name of the role to create, taken from resource name.
 property :vault_role, String, name_property: true
 
 load_current_value do |desired|
-  vault_auth
-  begin
-    role = @vault.with_retries do |attempts, error|
-      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-      @vault.logical.read(
-          "/#{vault_backend}/roles/#{vault_role}",
+  @vault = Vault::Client.new(desired.vault_client_options)
+  @vault.auth.send desired.vault_auth_method, *desired.vault_auth_credentials
 
-      )
-    end
-    role.data.each do |k,v|
-      send(k,v)
-    end
-  rescue Vault::HTTPError => e
+  role = @vault.with_retries do |attempts, error|
+    Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+    @vault.logical.read"/#{desired.vault_pki}/roles/#{vault_role}"
+  end
+  if role.nil?
     current_value_does_not_exist!
+  else
+    role.data.each do |k, v|
+      if respond_to?(k)
+        v = "#{v/3600}h" if [:max_ttl, :ttl].include? k
+        send(k, v)
+      end
+    end
   end
 end
 
 action :create do
   converge_if_changed do
-    begin
-      @vault.with_retries do |attempts, error|
-        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-        @vault.logical.write(
-            "/#{vault_backend}/roles/#{vault_role}",
-            ttl: new_resource.ttl,
-            max_ttl: new_resource.max_ttl,
-            allow_localhost: new_resource.allow_localhost,
-            allowed_domains: new_resource.allowed_domains,
-            allow_bare_domains: new_resource.allow_bare_domains,
-            allow_subdomains: new_resource.allow_subdomains,
-            allow_glob_domains: new_resource.allow_glob_domains,
-            allow_any_name: new_resource.allow_any_name,
-            enforce_hostnames: new_resource.enforce_hostnames,
-            allow_ip_sans: new_resource.allow_ip_sans,
-            allowed_uri_sans: new_resource.allowed_uri_sans,
-            server_flag: new_resource.server_flag,
-            client_flag: new_resource.client_flag,
-            code_signing_flag: new_resource.code_signing_flag,
-            email_protection_flag: new_resource.email_protection_flag,
-            key_type: new_resource.key_type,
-            key_bits: new_resource.key_bits,
-            key_usage: new_resource.key_usage,
-            ext_key_usage: new_resource.ext_key_usage,
-            use_csr_common_name: new_resource.use_csr_common_name,
-            use_csr_sans: new_resource.use_csr_sans,
-            ou: new_resource.ou,
-            organization: new_resource.organization,
-            country: new_resource.country,
-            locality: new_resource.locality,
-            province: new_resource.province,
-            street_address: new_resource.street_address,
-            postal_code: new_resource.postal_code,
-            generate_lease: new_resource.generate_lease,
-            no_store: new_resource.no_store,
-            require_cn: new_resource.require_cn,
-            policy_identifiers: new_resource.policy_identifiers,
-            basic_constraints_valid_for_non_ca: new_resource.basic_constraints_valid_for_non_ca,
-            not_before_duration: new_resource.not_before_duration
-        )
-      end
-    rescue Vault::HTTPError => e
-      message = "Failed to create pki role - #{new_resource.vault_role}.\n#{e.message}"
-      Chef::Log.fatal message
+    vault_auth
+    @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.write(
+          "/#{new_resource.vault_pki}/roles/#{new_resource.vault_role}",
+          ttl: new_resource.ttl,
+          max_ttl: new_resource.max_ttl,
+          allow_localhost: new_resource.allow_localhost,
+          allowed_domains: new_resource.allowed_domains,
+          allow_bare_domains: new_resource.allow_bare_domains,
+          allow_subdomains: new_resource.allow_subdomains,
+          allow_glob_domains: new_resource.allow_glob_domains,
+          allow_any_name: new_resource.allow_any_name,
+          enforce_hostnames: new_resource.enforce_hostnames,
+          allow_ip_sans: new_resource.allow_ip_sans,
+          allowed_uri_sans: new_resource.allowed_uri_sans,
+          server_flag: new_resource.server_flag,
+          client_flag: new_resource.client_flag,
+          code_signing_flag: new_resource.code_signing_flag,
+          email_protection_flag: new_resource.email_protection_flag,
+          key_type: new_resource.key_type,
+          key_bits: new_resource.key_bits,
+          key_usage: new_resource.key_usage,
+          ext_key_usage: new_resource.ext_key_usage,
+          use_csr_common_name: new_resource.use_csr_common_name,
+          use_csr_sans: new_resource.use_csr_sans,
+          ou: new_resource.ou,
+          organization: new_resource.organization,
+          country: new_resource.country,
+          locality: new_resource.locality,
+          province: new_resource.province,
+          street_address: new_resource.street_address,
+          postal_code: new_resource.postal_code,
+          generate_lease: new_resource.generate_lease,
+          no_store: new_resource.no_store,
+          require_cn: new_resource.require_cn,
+          policy_identifiers: new_resource.policy_identifiers,
+          basic_constraints_valid_for_non_ca: new_resource.basic_constraints_valid_for_non_ca,
+          not_before_duration: new_resource.not_before_duration
+      )
     end
   end
 end
 
 action :delete do
   converge_by do
-    begin
-      @vault.with_retries do |attempts, error|
-        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-        @vault.logical.write(
-            "/#{vault_backend}/roles/#{vault_role}"
-        )
-      end
-    rescue Vault::HTTPError => e
-      message = "Failed to delete pki role - #{new_resource.vault_role}.\n#{e.message}"
-      Chef::Log.fatal message
+    vault_auth
+    @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.write(
+          "/#{new_resource.vault_pki}/roles/#{new_resource.vault_role}"
+      )
     end
   end
 end

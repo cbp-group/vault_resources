@@ -1,6 +1,6 @@
 # Work derived from:
 # WhereTo vault_pki  https://github.com/wherefortravel/vault_pki
-# sous-chef vault cookbook secret https://github.com/sous-chefs/vault
+# sous-chef's vault cookbook secret https://github.com/sous-chefs/vault
 
 # rubocop:disable Layout/LeadingCommentSpace, Style/BlockComments
 =begin
@@ -16,7 +16,7 @@ This resource allow to request certificates from a vault server
   - `vault_auth method` is one supported by [Vault::Authenticate](https://www.rubydoc.info/github/hashicorp/vault-ruby/Vault/Authenticate)
   - `vault_auth_credentials` is an array which should match the method parameters of `vault_auth_method`
   - `vault_client_options` is a hash for which keys should be in Vault::Configurable.keys, the token will be set by the auth method and can be avoided
-  - `vaul_role` is the role in the pki backend to which requesting the certificate, must be of the form `<backend>/issue/<role>`
+  - `vault_role` is the role in the pki backend to which requesting the certificate, must be of the form `<backend>/issue/<role>`
 
   You can omit the vault_client_options like address if you want to use the environment variables for vault.
 
@@ -45,18 +45,26 @@ resource_name :vault_certificate
 property :common_name, String, name_property: true
 #<> @property certificate_path Where to write the resulting certificate files
 property :certificate_path, String, required: true
+# Files properties
 property :owner, String
-property :mode, String, default: '0600'
+property :mode, String
 property :group, String
 #<> @property alt_names Array of alternative names (sans) to add into the certificate
 property :alt_names, Array, default: []
 #<> @property ip_sans Array of alternative names in IP format to add into the certificate
 property :ip_sans, Array, default: []
+#<> @property uri_sans Array of URI:value to add into the certificate
+property :uri_sans, Array, default: []
+#<> @property other_sans Array of OID;UTF-8:value to add into the certificate
+property :other_sans, Array, default: []
 #<> @property ttl_days Validity of the certificate in days
 property :ttl_days, Integer, default: 365
+property :format, %w(pem der pem_bundle), default: 'pem', desired_state: false
+property :private_key_format, %w(der pkcs8), desired_state: false
+property :exclude_cn_from_sans, [true, false], default: false, desired_state: false
 #<> @property reissue_within_days Issue a new certificate if the current one is due to expire in less than this value in days
 property :reissue_within_days, Integer, default: 15, desired_state: false
-property :force_issue, [true, false], default: false
+property :force_issue, [true, false], default: false, desired_state: false
 property :vault_auth_method, String, default: 'token', desired_state: false, callbacks: {
   "should be one of Vault::Authenticate methods: #{Vault::Authenticate.instance_methods(false)}" => lambda do |m|
     Vault.auth.respond_to?(m)
@@ -82,23 +90,52 @@ load_current_value do |desired|
   cert_path = "#{desired.certificate_path}/#{desired.common_name}/certificate.pem"
   if ::File.exist?(cert_path)
     cert = OpenSSL::X509::Certificate.new ::File.read cert_path
-    cert_common_name = cert.subject.to_s(OpenSSL::X509::Name::COMPAT).split('=')[1]
-    common_name cert_common_name
+    Chef::Log.warn cert.inspect
+    cert_common_name = ''
+    cert.subject.to_a.each do |entry|
+      case entry[0]
+      when 'CN'
+        cert_common_name = entry[1]
+        common_name entry[1]
+      when 'C'
+        country entry[1]
+      when 'ST'
+        province entry[1]
+      when 'L'
+        locality entry[1]
+      when 'O'
+        organization entry[1]
+      when 'OU'
+        ou entry[1]
+      when 'street'
+        street_address entry[1]
+      when 'postalCode'
+        postal_code entry[1]
+      end
+    end
     current_alt_names = []
     current_ip_sans = []
+    current_uri_sans = []
+    current_other_sans = []
     cert.extensions.each do |ext|
-      next unless ext.oid().to_s == 'subjectAltName'
+      next unless ext.oid.to_s == 'subjectAltName'
       # "subjectAltName = DNS:test.wherefor.com, DNS:test2.wherefor.com, DNS:test3.wherefor.com, IP Address:127.0.0.1, IP Address:127.0.0.2"
-      ext.to_s.split('=')[1].split(',').each do |name|
-        type = name.split(':')[0]
-        value = name.split(':')[1]
-        if type.strip == 'DNS'
+      ext.value.to_s.split(',').each do |name|
+        type, value = name.split(':')
+        case type.strip
+        when 'DNS'
           current_alt_names.push(value)
-        elsif type.strip == 'IP Address'
+        when 'IP Address'
           current_ip_sans.push(value)
+        when 'URI'
+          current_uri_sans.push(value)
+        when 'otherName'
+          current_other_sans.push(value)
         end
         alt_names current_alt_names.sort - [desired.common_name, cert_common_name]
         ip_sans current_ip_sans.sort
+        uri_sans current_uri_sans.sort
+        other_sans current_other_sans.sort
       end
     end
   else
@@ -138,33 +175,29 @@ action_class do
   end
 
   def issue_cert
-    begin
-      secret = @vault.with_retries do |attempts, error|
-        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-        @vault.logical.write(
-          new_resource.vault_role,
-          common_name: new_resource.common_name,
-          alt_names: new_resource.alt_names.join(',').strip().chomp(','),
-          ip_sans: new_resource.ip_sans.sort.join(',').strip().chomp(','),
-          ttl: (new_resource.ttl_days * 24).to_s + 'h'
-        )
-      end
-    rescue Vault::HTTPError => e
-      message = "Failed to create cert - #{new_resource.common_name}.\n#{e.message}"
-      Chef::Log.fatal message
+    secret = @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.write(
+        new_resource.vault_role,
+        common_name: new_resource.common_name,
+        alt_names: new_resource.alt_names.join(',').strip().chomp(','),
+        ip_sans: new_resource.ip_sans.sort.join(',').strip().chomp(','),
+        ttl: (new_resource.ttl_days * 24).to_s + 'h'
+      )
     end
+
     if secret.nil?
       message = "Could not create cert - #{new_resource.common_name}"
-      Chef::Log.fatal message
-      return
+      raise message
     end
-    Chef::Log.warn secret.inspect
+
     directory "#{new_resource.certificate_path}/#{new_resource.common_name}" do
       owner new_resource.owner
       group new_resource.group
       mode new_resource.mode
       recursive true
     end
+
     secret.data.keys.each do |f|
       file "#{new_resource.certificate_path.chomp('/')}/#{new_resource.common_name}/#{f}.pem" do
         owner new_resource.owner

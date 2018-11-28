@@ -10,8 +10,11 @@ property :destination_path, String, default: '/tmp', desired_state: false
 property :type, ['internal','exported'], default: 'internal', desired_state: false
 #<> @property alt_names Array of alternative names (sans) to add into the certificate
 property :alt_names, Array, default: []
+#<> @property ip_sans Array of alternative names in IP format to add into the certificate
 property :ip_sans, Array, default: []
+#<> @property uri_sans Array of URI:value to add into the certificate
 property :uri_sans, Array, default: []
+#<> @property other_sans Array of OID;UTF-8:value to add into the certificate
 property :other_sans, Array, default: []
 property :format, %w(pem der pem_bundle), default: 'pem', desired_state: false
 property :private_key_format, %w(der pkcs8), desired_state: false
@@ -25,12 +28,14 @@ property :locality, String, default: ''
 property :province, String, default: ''
 property :street_address, String, default: ''
 property :postal_code, String, default: ''
-property :ca_url, String, default: ''
-property :crl_url, String, default: ''
+property :issuing_certificates, String, default: ''
+property :crl_distribution_points, String, default: ''
 property :ocsp_servers, String, default: ''
+#<> @property ttl_days Validity of the CA certificate in days
+property :ttl_days, Integer, default: 365
 # Files properties (when exported)
 property :owner, String
-property :mode, String, default: '0600'
+property :mode, String
 property :group, String
 # Vault properties
 #<> @property reissue_within_days Issue a new CA certificate if the current one is due to expire in less than this value in days
@@ -55,14 +60,14 @@ property :vault_client_options, Hash, desired_state: false, default: {}, callbac
 property :vault_role, String, default: 'pki', desired_state: false
 
 load_current_value do |desired|
-  cert_path = "#{desired.certificate_path}/#{desired.common_name}/certificate.pem"
-  vault_auth
+  @vault = Vault::Client.new(desired.vault_client_options)
+  @vault.auth.send desired.vault_auth_method, *desired.vault_auth_credentials
   begin
     current_cert = @vault.with_retries do |attempts, error|
-      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-      @vault.logical.read(
-          "/#{new_resource.vault_role}/ca"
-      )
+    Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+    @vault.logical.read(
+        "/#{desired.vault_role}/cert/ca"
+    )
     end
   rescue Vault::HTTPError
     current_cert = nil
@@ -71,7 +76,7 @@ load_current_value do |desired|
     urls = @vault.with_retries do |attempts, error|
       Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
       @vault.logical.read(
-          "/#{new_resource.vault_role}/config/urls"
+          "/#{desired.vault_role}/config/urls"
       )
     end
     unless urls.nil?
@@ -84,19 +89,22 @@ load_current_value do |desired|
     crl_distribution_points ''
     ocsp_servers ''
   end
-  if ::File.exist?(cert_path)
-    current_cert = OpenSSL::X509::Certificate.new ::File.read cert_path
-  end
+
   if current_cert != nil
-    cert = OpenSSL::X509::Certificate.new ::File.read cert_path
-    cert_common_name = cert.subject.to_s(OpenSSL::X509::Name::COMPAT).split('=')[1]
-    common_name cert_common_name
+    cert = OpenSSL::X509::Certificate.new current_cert.data[:certificate]
+    Chef::Log.warn cert.inspect
+    # cert_common_name = cert.subject.to_s(OpenSSL::X509::Name::COMPAT).split('=')[1]
+    # common_name cert_common_name
     current_alt_names = []
     current_ip_sans = []
     current_uri_sans = []
     current_other_sans = []
-    cert.issuer.to_a.each do |entry|
+    cert_common_name = ''
+    cert.subject.to_a.each do |entry|
       case entry[0]
+      when 'CN'
+        cert_common_name = entry[1]
+        common_name entry[1]
       when 'C'
         country entry[1]
       when 'ST'
@@ -114,10 +122,10 @@ load_current_value do |desired|
       end
     end
     cert.extensions.each do |ext|
-      next unless ext.oid().to_s == 'subjectAltName'
+      next unless ext.oid.to_s == 'subjectAltName'
       # "subjectAltName = DNS:test.wherefor.com, DNS:test2.wherefor.com, DNS:test3.wherefor.com, IP Address:127.0.0.1, IP Address:127.0.0.2"
-      ext.to_s.split('=')[1].split(',').each do |name|
-        type, value = name.split(':',1)
+      ext.value.to_s.split(',').each do |name|
+        type, value = name.split(':')
         case type.strip
         when 'DNS'
           current_alt_names.push(value)
@@ -140,8 +148,8 @@ load_current_value do |desired|
 end
 
 action :issue do
-  issuing, reason = should_issue?
   vault_auth
+  issuing, reason = should_issue?
   if issuing
     converge_by reason do
       issue_ca
@@ -155,10 +163,19 @@ end
 
 action_class do
   def should_issue?
-    cert_path = "#{new_resource.destination_path}/#{new_resource.common_name}/certificate.pem"
+    begin
+      current_cert = @vault.with_retries do |attempts, error|
+        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+        @vault.logical.read(
+            "/#{new_resource.vault_role}/cert/ca"
+        )
+      end
+    rescue Vault::HTTPError
+      current_cert = nil
+    end
     return [true, 'issuing because :force_issue is true'] if new_resource.force_issue
-    return [true, "issuing because no cert at :certificate_path (#{cert_path}) exists"] unless ::File.exist?(cert_path)
-    cert = OpenSSL::X509::Certificate.new ::File.read cert_path
+    return [true, 'issuing because no cert exists'] if current_cert.nil?
+    cert = OpenSSL::X509::Certificate.new current_cert.data[:certificate]
     not_after = cert.not_after
     days_until_expiry = (not_after - Time.now.utc()) / (60 * 60 * 24)
     return [true, "reissuing because cert is set to expire within :reissue_within_days (#{new_resource.reissue_within_days}) (expires in #{days_until_expiry})"] if days_until_expiry < new_resource.reissue_within_days
@@ -171,73 +188,95 @@ action_class do
   end
 
   def issue_ca
-    begin
-      secret = @vault.with_retries do |attempts, error|
-        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-        @vault.logical.write(
-            "/#{new_resource.vault_role}/intermediate/generate/#{new_resource.type}",
-            common_name: new_resource.common_name,
-            alt_names: new_resource.alt_names.join(',').strip().chomp(','),
-            ip_sans: new_resource.ip_sans.sort.join(',').strip().chomp(','),
-            uri_sans: new_resource.uri_sans.sort.join(',').strip().chomp(','),
-            other_sans: new_resource.other_sans.sort.join(',').strip().chomp(','),
-            ttl: (new_resource.ttl_days * 24).to_s + 'h',
-            format: new_resource.format,
-            private_key_format: new_resource.private_key_format,
-            key_type: new_resource.key_type,
-            key_bits: new_resource.key_bits,
-            exclude_cn_from_sans: new_resource.exclude_cn_from_sans,
-            ou: new_resource.ou,
-            organization: new_resource.organization,
-            country: new_resource.country,
-            locality: new_resource.locality,
-            province: new_resource.province,
-            street_address: new_resource.street_address,
-            postal_code: new_resource.postal_code,
-            )
-      end
-    rescue Vault::HTTPError => e
-      message = "Failed to create CA cert - #{new_resource.common_name}.\n#{e.message}"
-      Chef::Log.fatal message
+    backends = @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.read(
+          '/sys/mounts'
+      )
     end
-    if secret.nil?
-      message = "Could not create CA cert - #{new_resource.common_name}, no data retrieved"
-      Chef::Log.fatal message
-      return
-    end
-    Chef::Log.warn secret.inspect
-    ca = OpenSSL::X509::Certificate.new new_resource.signing_ca['cert']
-    ca_key = OpenSSL::X509.read File.read(new_resource.signing_ca['key']), new_resource.signing_ca['passphrase']
-    csr = OpenSSL::X509::Certificate.new secret.data['csr']
-    csr.issuer = ca.subject
-    csr.sign ca_key, OpenSSL::Digest::SHA512.new
-    secret.data['cert'] = csr.to_pem
-    begin
+    if backends.data[:"#{new_resource.vault_role}/"].nil?
       @vault.with_retries do |attempts, error|
         Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
         @vault.logical.write(
-            "/#{new_resource.vault_role}/intermediate/set_signed",
-            certificate: csr.to_pem
+            "/sys/mounts/#{new_resource.vault_role}",
+            type: 'pki',
+            config: { max_lease_ttl: new_resource.ttl_days * 48 * 3600 }
         )
       end
-    rescue Vault::HTTPError => e
-      message = "Failed to create CA cert - #{new_resource.common_name}.\n#{e.message}"
-      Chef::Log.fatal message
     end
-    converge_if_changed :issuing_certificatesn, :crl_distribution_points, :ocsp_servers do
-      begin
-        @vault.with_retries do |attempts, error|
-          Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
-          @vault.logical.write(
-              "/#{new_resource.vault_role}/config/urls",
-              issuing_certificates: new_resource.ca_url,
-              crl_distribution_points: new_resource.crl_url,
-              ocsp_servers: new_resource.ocsp_servers
+    @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.delete "#{new_resource.vault_role}/root"
+    end
+    secret = @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.write(
+          "/#{new_resource.vault_role}/intermediate/generate/#{new_resource.type}",
+          common_name: new_resource.common_name,
+          alt_names: new_resource.alt_names.join(',').strip().chomp(','),
+          ip_sans: new_resource.ip_sans.sort.join(',').strip().chomp(','),
+          uri_sans: new_resource.uri_sans.sort.join(',').strip().chomp(','),
+          other_sans: new_resource.other_sans.sort.join(',').strip().chomp(','),
+          ttl: (new_resource.ttl_days * 24 * 60 * 60),
+          format: new_resource.format,
+          private_key_format: new_resource.private_key_format,
+          key_type: new_resource.key_type,
+          key_bits: new_resource.key_bits,
+          exclude_cn_from_sans: new_resource.exclude_cn_from_sans,
+          ou: new_resource.ou,
+          organization: new_resource.organization,
+          country: new_resource.country,
+          locality: new_resource.locality,
+          province: new_resource.province,
+          street_address: new_resource.street_address,
+          postal_code: new_resource.postal_code,
           )
-        end
-      rescue Vault::HTTPError => e
-        message = "Failed to set urls - #{new_resource.common_name}.\n#{e.message}"
-        Chef::Log.fatal message
+    end
+    if secret.nil?
+      message = "Could not create CA cert - #{new_resource.common_name}, no data retrieved"
+      raise message
+    end
+    ca = OpenSSL::X509::Certificate.new new_resource.signing_ca['cert']
+    ca_key = OpenSSL::PKey.read new_resource.signing_ca['key'], new_resource.signing_ca['passphrase']
+    csr = OpenSSL::X509::Request.new secret.data[:csr]
+    raise 'CSR can not be verified' unless csr.verify csr.public_key
+    csr_cert = OpenSSL::X509::Certificate.new
+    csr_cert.serial = 0
+    csr_cert.version = 2
+    csr_cert.not_before = Time.now
+    csr_cert.not_after = Time.now + (new_resource.ttl_days * 24 * 3600)
+    csr_cert.subject = csr.subject
+    csr_cert.serial = Time.now.hash
+    csr_cert.public_key = csr.public_key
+    csr_cert.issuer = ca.subject
+    csr_cert.sign ca_key, OpenSSL::Digest::SHA512.new
+    extension_factory = OpenSSL::X509::ExtensionFactory.new
+    extension_factory.subject_certificate = csr_cert
+    extension_factory.issuer_certificate = ca
+    csr_cert.add_extension    extension_factory.create_extension('basicConstraints', 'CA:TRUE')
+    csr_cert.add_extension    extension_factory.create_extension(
+        'keyUsage', 'keyEncipherment,dataEncipherment,digitalSignature')
+    csr_cert.add_extension    extension_factory.create_extension('subjectKeyIdentifier', 'hash')
+    datas = secret.data.dup
+    datas[:certificate] = csr_cert.to_pem
+
+    @vault.with_retries do |attempts, error|
+      Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+      @vault.logical.write(
+          "/#{new_resource.vault_role}/intermediate/set-signed",
+          certificate: csr_cert.to_pem
+      )
+    end
+
+    converge_if_changed :issuing_certificates, :crl_distribution_points, :ocsp_servers do
+      @vault.with_retries do |attempts, error|
+        Chef::Log.info "Received exception #{error.class} from Vault - attempt #{attempts}" unless attempts == 0
+        @vault.logical.write(
+            "/#{new_resource.vault_role}/config/urls",
+            issuing_certificates: new_resource.issuing_certificates,
+            crl_distribution_points: new_resource.crl_distribution_points,
+            ocsp_servers: new_resource.ocsp_servers
+        )
       end
     end
     return unless new_resource.type == 'exported'
@@ -247,8 +286,8 @@ action_class do
       mode new_resource.mode
       recursive true
     end
-    secret.data.keys.each do |f|
-      file "#{new_resource.certificate_path.chomp('/')}/#{new_resource.common_name}/#{f}.pem" do
+    datas.keys.each do |f|
+      file "#{new_resource.destination_path.chomp('/')}/#{new_resource.common_name}/#{f}.pem" do
         owner new_resource.owner
         group new_resource.group
         mode new_resource.mode

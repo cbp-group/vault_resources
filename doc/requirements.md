@@ -1,0 +1,1 @@
+Used on windows and ubuntu platforms, should work on eveything compatible with Chef 13 and above
