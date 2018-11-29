@@ -50,11 +50,13 @@ property :vault_auth_credentials, Array, desired_state: false, default: [], sens
 #<> @property vault_client_options Define the option to pass to vault client, could be empty to use environment variables.
 property :vault_client_options, Hash, desired_state: false, default: {}, callbacks: {
     "options should only include valid keys: #{Vault::Configurable.keys}" => lambda do |v|
-      (v.keys.map { |k| k.is_a?(String) ? k.to_sym : k } - Vault::Configurable.keys).empty?
+      (v.keys.map { |k| k.to_sym } - Vault::Configurable.keys).empty?
     end,
     'address should be a valid url' => lambda do |v|
-      v.empty? || URI.parse(v['address'])
+      v.empty? || URI.parse(v[:address])
     end,
+}, coerce: proc { |i|
+  i.map { |k, v| [k.to_sym, v] }.to_h
 }
 #<> @property vault_role where to mount this pki backend in vault.
 property :vault_role, String, default: 'pki', desired_state: false
@@ -92,9 +94,6 @@ load_current_value do |desired|
 
   if current_cert != nil
     cert = OpenSSL::X509::Certificate.new current_cert.data[:certificate]
-    Chef::Log.warn cert.inspect
-    # cert_common_name = cert.subject.to_s(OpenSSL::X509::Name::COMPAT).split('=')[1]
-    # common_name cert_common_name
     current_alt_names = []
     current_ip_sans = []
     current_uri_sans = []

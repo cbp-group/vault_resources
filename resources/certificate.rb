@@ -79,6 +79,8 @@ property :vault_client_options, Hash, desired_state: false, default: {}, callbac
   'address should be a valid url' => lambda do |v|
     v.empty? || URI.parse(v['address'])
   end,
+}, coerce: proc { |i|
+  i.map { |k, v| [k.to_sym, v] }.to_h
 }
 property :vault_role, String, default: 'pki/issue/webserver', desired_state: false, callbacks: {
   'must be a issue endpoint' => lambda do |r|
