@@ -54,7 +54,7 @@ property :vault_client_options, Hash, desired_state: false, default: {}, callbac
       (v.keys.map { |k| k.is_a?(String) ? k.to_sym : k } - Vault::Configurable.keys).empty?
     end,
     'address should be a valid url' => lambda do |v|
-      v.empty? || URI.parse(v['address'])
+      v.empty? || URI.parse(v[:address])
     end,
 }, coerce: proc { |i|
   i.map { |k, v| [k.to_sym, v] }.to_h
