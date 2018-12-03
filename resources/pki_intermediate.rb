@@ -240,7 +240,7 @@ action_class do
     csr = OpenSSL::X509::Request.new secret.data[:csr]
     raise 'CSR can not be verified' unless csr.verify csr.public_key
     csr_cert = OpenSSL::X509::Certificate.new
-    csr_cert.serial = 0
+    # csr_cert.serial = 0
     csr_cert.version = 2
     csr_cert.not_before = Time.now
     csr_cert.not_after = Time.now + (new_resource.ttl_days * 24 * 3600)
@@ -248,14 +248,14 @@ action_class do
     csr_cert.serial = Time.now.hash
     csr_cert.public_key = csr.public_key
     csr_cert.issuer = ca.subject
-    csr_cert.sign ca_key, OpenSSL::Digest::SHA512.new
     extension_factory = OpenSSL::X509::ExtensionFactory.new
     extension_factory.subject_certificate = csr_cert
     extension_factory.issuer_certificate = ca
     csr_cert.add_extension    extension_factory.create_extension('basicConstraints', 'CA:TRUE')
     csr_cert.add_extension    extension_factory.create_extension(
-        'keyUsage', 'keyEncipherment,dataEncipherment,digitalSignature')
+        'keyUsage', 'keyCertSign,cRLSign,keyEncipherment,dataEncipherment,digitalSignature')
     csr_cert.add_extension    extension_factory.create_extension('subjectKeyIdentifier', 'hash')
+    csr_cert.sign ca_key, OpenSSL::Digest::SHA512.new
     datas = secret.data.dup
     datas[:certificate] = csr_cert.to_pem
 

@@ -92,7 +92,6 @@ load_current_value do |desired|
   cert_path = "#{desired.certificate_path}/#{desired.common_name}/certificate.pem"
   if ::File.exist?(cert_path)
     cert = OpenSSL::X509::Certificate.new ::File.read cert_path
-    Chef::Log.warn cert.inspect
     cert_common_name = ''
     cert.subject.to_a.each do |entry|
       case entry[0]
