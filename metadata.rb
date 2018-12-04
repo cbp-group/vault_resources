@@ -1,6 +1,6 @@
 name 'vault_resources'
-source_url "https://github.com/Tensibai/#{name}"
-issues_url "https://github.com/Tensibai/#{name}/issues"
+source_url "https://github.com/cbp-group/#{name}"
+issues_url "https://github.com/cbp-group/#{name}/issues"
 maintainer 'DTD-Platforms'
 maintainer_email 'dtd-plateformes@cbp-group.com'
 license 'MIT'
