@@ -246,8 +246,8 @@ This resource allow to request certificates from a vault server
 
 Maintainer:: DTD-Platforms (<dtd-plateformes@cbp-group.com>)
 
-Source:: https://github.com/Tensibai/vault_resources
+Source:: https://github.com/cbp-group/vault_resources
 
-Issues:: https://github.com/Tensibai/vault_resources/issues
+Issues:: https://github.com/cbp-group/vault_resources/issues
 
 License:: MIT
